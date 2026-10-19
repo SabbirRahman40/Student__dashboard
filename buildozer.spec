@@ -1,5 +1,3 @@
-```ini
-[app]
 
 title = Sabbir Smart Student Dashboard
 package.name = studentdashboard
