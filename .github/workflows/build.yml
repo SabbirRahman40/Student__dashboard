@@ -1,9 +1,12 @@
+
 name: Build Android APK
 
 on:
-  workflow_dispatch:
   push:
-    branches: [ "main", "master" ]
+    branches:
+      - main
+      - master
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -23,64 +26,70 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Install system build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            git zip unzip wget curl \
-            build-essential autoconf automake libtool pkg-config \
-            zlib1g-dev libncurses-dev libffi-dev libssl-dev \
-            cmake gettext
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install Buildozer and Python build dependencies
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git zip unzip wget curl \
+            build-essential autoconf automake libtool \
+            pkg-config zlib1g-dev libncurses-dev \
+            libffi-dev libssl-dev cmake gettext
+
+      - name: Install Buildozer
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install "Cython==0.29.36" "buildozer"
+          python -m pip install "Cython==0.29.36" buildozer
 
-      - name: Verify project files and Python syntax
-        run: |
-          test -f main.py
-          test -f student_data.json
-          test -f buildozer.spec
-          python -m py_compile main.py
-          python -m json.tool student_data.json > /dev/null
-
-      - name: Accept Android SDK licenses
+      - name: Check project files
         shell: bash
         run: |
-          # Buildozer downloads/configures its Android SDK during the build.
-          # Accept licenses if sdkmanager is already available; Buildozer's
-          # own license option is also enabled in buildozer.spec.
-          set +e
-          SDKMANAGER="$(find "$HOME/.buildozer" "$ANDROID_HOME" "$ANDROID_SDK_ROOT" \
-            -type f -path '*/bin/sdkmanager' 2>/dev/null | head -n 1)"
-          if [ -n "$SDKMANAGER" ]; then
-            yes | "$SDKMANAGER" --licenses >/dev/null 2>&1
-            true
+          set -e
+          test -f main.py
+          test -f buildozer.spec
+
+          python -m py_compile main.py
+
+          JSON_FILES=$(find . -maxdepth 1 -type f -name '*.json')
+          if [ -z "$JSON_FILES" ]; then
+            echo "ERROR: No JSON data file found in the project root."
+            exit 1
           fi
-          exit 0
-    
+
+          while IFS= read -r file; do
+            python -m json.tool "$file" > /dev/null
+            echo "Valid JSON: $file"
+          done <<< "$JSON_FILES"
+
+      - name: Clear old Buildozer cache
+        run: |
+          rm -rf .buildozer bin
+          mkdir -p bin
+
       - name: Build debug APK
         shell: bash
         run: |
-          set +e
-          yes | buildozer -v android debug
-          build_status=${PIPESTATUS[1]}
-          if [ "$build_status" -ne 0 ]; then
-            echo "Buildozer failed with exit code $build_status"
-            exit "$build_status"
-          fi
+          set -o pipefail
+          buildozer -v android debug 2>&1 | tee build.log
 
-      - name: Upload APK artifact
+      - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: student-dashboard-debug-apk
+          name: Sabbir-Smart-Student-Dashboard-APK
           path: bin/*.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload build log if build fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: student-dashboard-build-log
+          path: build.log
+          if-no-files-found: warn
+          retention-days: 7
