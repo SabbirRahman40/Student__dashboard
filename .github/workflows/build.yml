@@ -64,21 +64,17 @@ jobs:
             true
           fi
           exit 0
-
-
-      - name: Accept Android SDK Licenses
-        shell: bash
-        run: |
-          mkdir -p "$ANDROID_HOME/licenses"
-          printf '%s\n' \
-            '24333f8a63b6825ea9c5514f83c2829b004d1fee' \
-            '8933bad161af4178b1185d1a37fbf41ea5269c55' \
-            > "$ANDROID_HOME/licenses/android-sdk-license"
-
+    
       - name: Build debug APK
         shell: bash
         run: |
-          buildozer -v android debug
+          set +e
+          yes | buildozer -v android debug
+          build_status=${PIPESTATUS[1]}
+          if [ "$build_status" -ne 0 ]; then
+            echo "Buildozer failed with exit code $build_status"
+            exit "$build_status"
+          fi
 
       - name: Upload APK artifact
         if: success()
