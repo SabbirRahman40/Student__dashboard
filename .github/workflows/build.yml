@@ -1,10 +1,9 @@
-
 name: Build Android APK
 
 on:
   workflow_dispatch:
   push:
-    branches: ["main", "master"]
+    branches: [ "main", "master" ]
 
 permissions:
   contents: read
@@ -31,42 +30,55 @@ jobs:
             git zip unzip wget curl \
             build-essential autoconf automake libtool pkg-config \
             zlib1g-dev libncurses-dev libffi-dev libssl-dev \
-            cmake gettext libltdl-dev
+            cmake gettext
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install Buildozer and Python dependencies
+      - name: Install Buildozer and Python build dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install "Cython==0.29.36" buildozer
+          python -m pip install "Cython==0.29.36" "buildozer"
 
-      - name: Verify project files
+      - name: Verify project files and Python syntax
         run: |
           test -f main.py
           test -f student_data.json
           test -f buildozer.spec
           python -m py_compile main.py
           python -m json.tool student_data.json > /dev/null
-          echo "Project files verified successfully."
+
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          # Buildozer downloads/configures its Android SDK during the build.
+          # Accept licenses if sdkmanager is already available; Buildozer's
+          # own license option is also enabled in buildozer.spec.
+          set +e
+          SDKMANAGER="$(find "$HOME/.buildozer" "$ANDROID_HOME" "$ANDROID_SDK_ROOT" \
+            -type f -path '*/bin/sdkmanager' 2>/dev/null | head -n 1)"
+          if [ -n "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses >/dev/null 2>&1
+            true
+          fi
+          exit 0
+
+
+      - name: Accept Android SDK Licenses
+        shell: bash
+        run: |
+          mkdir -p "$ANDROID_HOME/licenses"
+          printf '%s\n' \
+            '24333f8a63b6825ea9c5514f83c2829b004d1fee' \
+            '8933bad161af4178b1185d1a37fbf41ea5269c55' \
+            > "$ANDROID_HOME/licenses/android-sdk-license"
 
       - name: Build debug APK
         shell: bash
         run: |
-          set -o pipefail
-          mkdir -p logs
-          buildozer -v android debug 2>&1 | tee logs/build.log
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: student-dashboard-build-log
-          path: logs/build.log
-          if-no-files-found: ignore
-          retention-days: 7
+          buildozer -v android debug
 
       - name: Upload APK artifact
         if: success()
