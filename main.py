@@ -19,18 +19,13 @@ from kivy.resources import resource_find
 from kivy.graphics import Color, Rectangle, RoundedRectangle
 from kivy.animation import Animation
 
-# The packaged JSON is read-only on Android. Runtime changes must be saved in
-# App.user_data_dir, which is writable and persists between app launches.
 DATA_FILE_NAME = "student_data.json"
-
 
 def get_data_file():
     app = App.get_running_app()
     if app is not None:
         return os.path.join(app.user_data_dir, DATA_FILE_NAME)
-    # Fallback for running this file directly in a desktop Python environment.
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), DATA_FILE_NAME)
-
 
 DEFAULT_DATA = {
     "users": {},
@@ -54,11 +49,14 @@ DEFAULT_DATA = {
     ],
     "exams": [],
     "tasks": [],
-    "albums": {}
+    "photos": [],
+    "notes": [],
+    "resources": [],
+    "cgpa_list": [],
+    "theme": "asmani"
 }
 
 def _normalize_data(data):
-    """Fill missing data sections and normalize legacy user records."""
     if not isinstance(data, dict):
         data = {}
     normalized = copy.deepcopy(DEFAULT_DATA)
@@ -68,53 +66,50 @@ def _normalize_data(data):
         normalized["users"] = {}
     for username, user in list(normalized["users"].items()):
         if isinstance(user, str):
-            normalized["users"][username] = {
-                "password": user,
-                "phone": "",
-            }
+            normalized["users"][username] = {"password": user, "phone": ""}
         elif isinstance(user, dict):
             user.setdefault("password", "")
             user.setdefault("phone", "")
         else:
             normalized["users"].pop(username, None)
 
-    for key in ("routine", "exams", "tasks"):
+    for key in ("routine", "exams", "tasks", "photos", "notes", "resources", "cgpa_list"):
         if not isinstance(normalized.get(key), list):
             normalized[key] = []
-    if not isinstance(normalized.get("albums"), dict):
-        normalized["albums"] = {}
+    if "theme" not in normalized:
+        normalized["theme"] = "asmani"
     return normalized
-
 
 def load_data():
     data_path = get_data_file()
-    if not os.path.exists(data_path):
-        # On first Android launch, seed the writable file from the bundled JSON.
+    data = None
+    
+    if os.path.exists(data_path):
+        try:
+            with open(data_path, "r", encoding="utf-8") as f:
+                raw_data = json.load(f)
+                data = _normalize_data(raw_data)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+            
+    if data is None:
         bundled_path = resource_find(DATA_FILE_NAME)
         if not bundled_path:
-            bundled_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), DATA_FILE_NAME
-            )
+            bundled_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), DATA_FILE_NAME)
         if bundled_path and os.path.isfile(bundled_path):
             try:
                 os.makedirs(os.path.dirname(data_path), exist_ok=True)
                 shutil.copyfile(bundled_path, data_path)
+                with open(data_path, "r", encoding="utf-8") as f:
+                    data = _normalize_data(json.load(f))
             except OSError:
                 pass
-
-    if os.path.exists(data_path):
-        try:
-            with open(data_path, "r", encoding="utf-8") as f:
-                data = _normalize_data(json.load(f))
-            return data
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            # Keep the app usable if the saved file is damaged; replace it below.
-            pass
-
-    data = _normalize_data(DEFAULT_DATA)
+                
+    if data is None:
+        data = _normalize_data(DEFAULT_DATA)
+        
     save_data(data)
     return data
-
 
 def save_data(data):
     data_path = get_data_file()
@@ -143,7 +138,6 @@ class CardBox(BoxLayout):
         self.rect.size = instance.size
         self.rect.pos = instance.pos
 
-# Perfectly Centered Auth Card with Modern Square/Rounded Look
 class AuthCard(BoxLayout):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -156,7 +150,7 @@ class AuthCard(BoxLayout):
         self.pos_hint = {'center_x': 0.5, 'center_y': 0.5}
         
         with self.canvas.before:
-            Color(1, 1, 1, 0.97) # Clean White Card
+            Color(1, 1, 1, 0.97)
             self.rect = RoundedRectangle(size=self.size, pos=self.pos, radius=[20])
         self.bind(size=self._update_rect, pos=self._update_rect)
 
@@ -170,10 +164,10 @@ class AsmaniButton(Button):
         self.background_normal = ''
         self.background_color = (0.1, 0.55, 0.85, 1)
         self.color = (1, 1, 1, 1)
-        self.font_size = '15sp'
+        self.font_size = '14sp'
         self.bold = True
         self.size_hint_y = None
-        self.height = dp(45)
+        self.height = dp(42)
 
 class AccentButton(Button):
     def __init__(self, **kwargs):
@@ -190,19 +184,16 @@ class StudentApp(App):
         self.title = "Sabbir's Smart Student Dashboard"
         self.data = load_data()
         self.current_user = None
-        self.dark_mode = False
         self.routine_view_mode = "today"
-        
         self.temp_reg_data = {}
         self.temp_forgot_data = {}
         
-        # A fixed Window.size is useful on desktop but should not be forced on Android.
         if not hasattr(self, "_android_window_configured") and "ANDROID_ARGUMENT" not in os.environ:
             Window.size = (450, 720)
-        self.root_layout = FloatLayout() # FloatLayout ensures absolute centering
+        self.root_layout = FloatLayout()
         
         with self.root_layout.canvas.before:
-            self.bg_color_inst = Color(0.72, 0.88, 0.98, 1) # Rich Asmani Background
+            self.bg_color_inst = Color(0.72, 0.88, 0.98, 1)
             self.bg_rect = Rectangle(size=(1000, 1000), pos=(0, 0))
         self.root_layout.bind(size=self._update_bg, pos=self._update_bg)
 
@@ -217,8 +208,6 @@ class StudentApp(App):
         self.root_layout.clear_widgets()
 
     def animate_pop_in(self, widget):
-        # Kivy widgets do not have a built-in `scale` property. Fade the card in
-        # without assigning an unsupported attribute (which caused a crash).
         widget.opacity = 0
         Animation(opacity=1, duration=0.35, t="out_back").start(widget)
 
@@ -300,11 +289,7 @@ class StudentApp(App):
             
         otp = str(random.randint(1000, 9999))
         self.temp_reg_data = {"username": u, "phone": ph, "password": p, "otp": otp}
-        
-        print(f"\n================================")
-        print(f"[SMS OTP] Your Reg Code is: {otp}")
-        print(f"================================\n")
-        
+        print(f"\n[SMS OTP] Reg Code: {otp}\n")
         self.show_verify_reg_screen()
 
     def show_verify_reg_screen(self):
@@ -312,7 +297,7 @@ class StudentApp(App):
         card = AuthCard()
         self.animate_pop_in(card)
         
-        title = Label(text="🔒 Verify Phone Number", font_size="22sp", bold=True, color=(0.1, 0.4, 0.7, 1), size_hint_y=None, height=dp(45))
+        title = Label(text="🔒 Verify Phone", font_size="22sp", bold=True, color=(0.1, 0.4, 0.7, 1), size_hint_y=None, height=dp(45))
         card.add_widget(title)
         
         info_lbl = Label(text=f"Code sent to terminal for:\n{self.temp_reg_data.get('phone')}", font_size="13sp", color=(0.3, 0.3, 0.3, 1), size_hint_y=None, height=dp(45), halign='center')
@@ -320,7 +305,6 @@ class StudentApp(App):
         
         self.otp_input = TextInput(hint_text="Enter 4-digit Code", multiline=False, size_hint_y=None, height=dp(45))
         self.verify_msg = Label(text="", color=(0.9, 0.2, 0.2, 1), size_hint_y=None, height=dp(25))
-        
         card.add_widget(self.otp_input)
         card.add_widget(self.verify_msg)
         
@@ -331,21 +315,18 @@ class StudentApp(App):
         btn_back = AccentButton(text="🔙 Back")
         btn_back.bind(on_press=lambda x: self.show_register_screen())
         card.add_widget(btn_back)
-        
         self.root_layout.add_widget(card)
 
     def confirm_reg_otp(self, instance):
-        entered_otp = self.otp_input.text.strip()
-        if entered_otp == self.temp_reg_data.get("otp"):
+        if self.otp_input.text.strip() == self.temp_reg_data.get("otp"):
             u = self.temp_reg_data["username"]
             p = self.temp_reg_data["password"]
             ph = self.temp_reg_data["phone"]
-            
             self.data["users"][u] = {"password": p, "phone": ph}
             save_data(self.data)
             self.show_login_screen()
         else:
-            self.verify_msg.text = "❌ Incorrect Verification Code!"
+            self.verify_msg.text = "❌ Incorrect Code!"
 
     def show_forgot_screen(self):
         self.clear()
@@ -355,8 +336,8 @@ class StudentApp(App):
         title = Label(text="🔑 Reset Password", font_size="22sp", bold=True, color=(0.1, 0.4, 0.7, 1), size_hint_y=None, height=dp(45))
         card.add_widget(title)
         
-        self.f_user = TextInput(hint_text="Enter Username", multiline=False, size_hint_y=None, height=dp(42))
-        self.f_phone = TextInput(hint_text="Enter Registered Phone No", multiline=False, size_hint_y=None, height=dp(42))
+        self.f_user = TextInput(hint_text="Username", multiline=False, size_hint_y=None, height=dp(42))
+        self.f_phone = TextInput(hint_text="Registered Phone No", multiline=False, size_hint_y=None, height=dp(42))
         self.f_pass = TextInput(hint_text="New Password", password=True, multiline=False, size_hint_y=None, height=dp(42))
         self.f_msg = Label(text="", color=(0.9, 0.2, 0.2, 1), size_hint_y=None, height=dp(25))
         
@@ -372,28 +353,21 @@ class StudentApp(App):
         btn_back = AccentButton(text="🔙 Back to Login")
         btn_back.bind(on_press=lambda x: self.show_login_screen())
         card.add_widget(btn_back)
-        
         self.root_layout.add_widget(card)
 
     def send_forgot_otp(self, instance):
         u = self.f_user.text.strip()
         ph = self.f_phone.text.strip()
         p = self.f_pass.text
-        
         if not u or not ph or not p:
-            self.f_msg.text = "⚠️ All fields are required!"
+            self.f_msg.text = "⚠️ All fields required!"
             return
         if u not in self.data["users"] or self.data["users"][u]["phone"] != ph:
-            self.f_msg.text = "❌ Username or Phone doesn't match!"
+            self.f_msg.text = "❌ User/Phone mismatch!"
             return
-            
         otp = str(random.randint(1000, 9999))
         self.temp_forgot_data = {"username": u, "password": p, "otp": otp}
-        
-        print(f"\n================================")
-        print(f"[SMS OTP] Your Reset Code is: {otp}")
-        print(f"================================\n")
-        
+        print(f"\n[SMS OTP] Reset Code: {otp}\n")
         self.show_verify_forgot_screen()
 
     def show_verify_forgot_screen(self):
@@ -406,7 +380,6 @@ class StudentApp(App):
         
         self.f_otp_input = TextInput(hint_text="Enter 4-digit Code", multiline=False, size_hint_y=None, height=dp(45))
         self.f_verify_msg = Label(text="", color=(0.9, 0.2, 0.2, 1), size_hint_y=None, height=dp(25))
-        
         card.add_widget(self.f_otp_input)
         card.add_widget(self.f_verify_msg)
         
@@ -417,20 +390,17 @@ class StudentApp(App):
         btn_back = AccentButton(text="🔙 Back")
         btn_back.bind(on_press=lambda x: self.show_forgot_screen())
         card.add_widget(btn_back)
-        
         self.root_layout.add_widget(card)
 
     def confirm_forgot_otp(self, instance):
-        entered_otp = self.f_otp_input.text.strip()
-        if entered_otp == self.temp_forgot_data.get("otp"):
+        if self.f_otp_input.text.strip() == self.temp_forgot_data.get("otp"):
             u = self.temp_forgot_data["username"]
             p = self.temp_forgot_data["password"]
-            
             self.data["users"][u]["password"] = p
             save_data(self.data)
             self.show_login_screen()
         else:
-            self.f_verify_msg.text = "❌ Incorrect Verification Code!"
+            self.f_verify_msg.text = "❌ Incorrect Code!"
 
     def handle_login(self, instance):
         u = self.username_input.text.strip()
@@ -443,52 +413,50 @@ class StudentApp(App):
 
     def show_dashboard(self):
         self.clear()
+        dash_layout = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
         
-        # Switch root layout to BoxLayout for dashboard contents
-        dash_layout = BoxLayout(orientation="vertical", padding=dp(15), spacing=dp(10))
+        top_layout = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(10))
+        top_layout.add_widget(Label(text=f"👋 {self.current_user}'s Dashboard", font_size="15sp", bold=True, color=(0.1, 0.3, 0.5, 1)))
         
-        top_layout = BoxLayout(size_hint_y=None, height=dp(45), spacing=dp(10))
-        top_layout.add_widget(Label(text=f"👋 Welcome, {self.current_user}!", font_size="15sp", bold=True, color=(0.1, 0.3, 0.5, 1)))
-        
-        btn_logout = Button(text="🚪 Logout", size_hint_x=None, width=dp(75), background_color=(0.8, 0.2, 0.2, 1))
+        btn_logout = Button(text="🚪 Logout", size_hint_x=None, width=dp(70), background_color=(0.8, 0.2, 0.2, 1))
         btn_logout.bind(on_press=lambda x: self.show_login_screen())
         top_layout.add_widget(btn_logout)
-        
         dash_layout.add_widget(top_layout)
         
-        nav_layout = GridLayout(cols=4, size_hint_y=None, height=dp(42), spacing=dp(4))
+        nav_layout = GridLayout(cols=3, size_hint_y=None, height=dp(110), spacing=dp(4))
         
-        btn_routine = AsmaniButton(text="📅 Edit Routine")
-        btn_routine.bind(on_press=lambda x: self.show_routine_screen())
-        nav_layout.add_widget(btn_routine)
+        features = [
+            ("📅 Routine", self.show_routine_screen),
+            ("📝 Exams", self.show_exam_screen),
+            ("📌 Tasks", self.show_task_screen),
+            ("📊 CGPA", self.show_cgpa_screen),
+            ("📸 Vault", self.show_photo_screen),
+            ("⏱️ Timer", self.show_timer_screen),
+            ("📁 PDFs", self.show_resource_screen),
+            ("🎨 Themes", self.show_theme_screen),
+            ("📄 Raw JSON", self.show_json_viewer_screen)
+        ]
         
-        btn_exams = AsmaniButton(text="📝 Exams")
-        btn_exams.bind(on_press=lambda x: self.show_exam_screen())
-        nav_layout.add_widget(btn_exams)
-        
-        btn_tasks = AsmaniButton(text="📌 Tasks")
-        btn_tasks.bind(on_press=lambda x: self.show_task_screen())
-        nav_layout.add_widget(btn_tasks)
-        
-        btn_albums = AsmaniButton(text="🖼️ Albums")
-        btn_albums.bind(on_press=lambda x: self.show_album_screen())
-        nav_layout.add_widget(btn_albums)
-        
+        for name, callback in features:
+            btn = Button(text=name, background_normal='', background_color=(0.12, 0.5, 0.75, 1), color=(1,1,1,1), font_size='12sp', bold=True)
+            btn.bind(on_press=lambda inst, cb=callback: cb())
+            nav_layout.add_widget(btn)
+            
         dash_layout.add_widget(nav_layout)
         
-        toggle_layout = BoxLayout(size_hint_y=None, height=dp(38), spacing=dp(5))
-        btn_today = Button(text="📅 Today's Routine", background_color=(0.1, 0.6, 0.4, 1) if self.routine_view_mode=="today" else (0.4, 0.4, 0.4, 1))
+        toggle_layout = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(5))
+        btn_today = Button(text="📅 Today", background_color=(0.1, 0.6, 0.4, 1) if self.routine_view_mode=="today" else (0.4, 0.4, 0.4, 1))
         btn_today.bind(on_press=lambda x: self.set_routine_view("today"))
         toggle_layout.add_widget(btn_today)
         
-        btn_all = Button(text="📚 All Routine", background_color=(0.1, 0.6, 0.4, 1) if self.routine_view_mode=="all" else (0.4, 0.4, 0.4, 1))
+        btn_all = Button(text="📚 Weekly", background_color=(0.1, 0.6, 0.4, 1) if self.routine_view_mode=="all" else (0.4, 0.4, 0.4, 1))
         btn_all.bind(on_press=lambda x: self.set_routine_view("all"))
         toggle_layout.add_widget(btn_all)
         dash_layout.add_widget(toggle_layout)
         
         current_day_name = datetime.now().strftime("%A")
-        header_text = f"🔥 Routine for Today ({current_day_name}):" if self.routine_view_mode=="today" else "📚 Complete Weekly Routine:"
-        dash_layout.add_widget(Label(text=header_text, font_size="14sp", bold=True, color=(0.1, 0.3, 0.5, 1), size_hint_y=None, height=dp(28)))
+        header_text = f"🔥 Today's Routine ({current_day_name}):" if self.routine_view_mode=="today" else "📚 Weekly Routine:"
+        dash_layout.add_widget(Label(text=header_text, font_size="13sp", bold=True, color=(0.1, 0.3, 0.5, 1), size_hint_y=None, height=dp(24)))
         
         scroll = ScrollView()
         routine_layout = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6), padding=dp(2))
@@ -499,20 +467,18 @@ class StudentApp(App):
             filtered_routine = [item for item in self.data["routine"] if item['day'].lower() == current_day_name.lower()]
         
         if not filtered_routine:
-            routine_layout.add_widget(Label(text="No classes scheduled for today!", font_size="13sp", color=(0.5, 0.5, 0.5, 1), size_hint_y=None, height=dp(40)))
+            routine_layout.add_widget(Label(text="No classes scheduled!", font_size="13sp", color=(0.5, 0.5, 0.5, 1), size_hint_y=None, height=dp(40)))
         else:
             for item in filtered_routine:
-                card = CardBox(bg_color=(0.88, 0.93, 0.98, 1))
-                rem_status = f"🔔 {item.get('reminder_min', 30)}m" if item.get('reminder_on', True) else "🔕 Off"
-                txt = f"[b]{item['day']}[/b] | {item['time']}\n[color=224466]{item['subject']}[/color]\nRoom: {item['room']} | {rem_status}"
-                lbl = Label(text=txt, markup=True, font_size="12sp", color=(0.15, 0.15, 0.15, 1), halign='left', valign='middle')
+                card = CardBox()
+                txt = f"[b]{item['day']}[/b] | {item['time']}\n[color=224466]{item['subject']}[/color]\nRoom: {item['room']} | Reminder: {item.get('reminder_min', 30)}m"
+                lbl = Label(text=txt, markup=True, font_size="11sp", color=(0.15, 0.15, 0.15, 1), halign='left', valign='middle')
                 lbl.bind(size=lbl.setter('text_size'))
                 card.add_widget(lbl)
                 routine_layout.add_widget(card)
             
         scroll.add_widget(routine_layout)
         dash_layout.add_widget(scroll)
-        
         self.root_layout.add_widget(dash_layout)
 
     def set_routine_view(self, mode):
@@ -522,16 +488,15 @@ class StudentApp(App):
     def show_routine_screen(self):
         self.clear()
         screen = BoxLayout(orientation="vertical", padding=dp(15), spacing=dp(10))
-        screen.add_widget(Label(text="📅 Manage Class Routine & Reminders", font_size="18sp", bold=True, color=(0.1, 0.3, 0.5, 1), size_hint_y=None, height=dp(35)))
+        screen.add_widget(Label(text="📅 Routine & Reminders", font_size="18sp", bold=True, color=(0.1, 0.3, 0.5, 1), size_hint_y=None, height=dp(35)))
         
-        self.r_day = TextInput(hint_text="Day (Saturday / Sunday / ...)", multiline=False, size_hint_y=None, height=dp(36))
+        self.r_day = TextInput(hint_text="Day (Saturday/Sunday...)", multiline=False, size_hint_y=None, height=dp(36))
         self.r_time = TextInput(hint_text="Time (e.g. 1:10-2:10 PM)", multiline=False, size_hint_y=None, height=dp(36))
         self.r_sub = TextInput(hint_text="Subject Name", multiline=False, size_hint_y=None, height=dp(36))
         self.r_room = TextInput(hint_text="Room No", multiline=False, size_hint_y=None, height=dp(36))
-        self.r_rem = TextInput(hint_text="Reminder Mins (e.g. 30)", multiline=False, size_hint_y=None, height=dp(36))
         
-        for widget in [self.r_day, self.r_time, self.r_sub, self.r_room, self.r_rem]:
-            screen.add_widget(widget)
+        for w in [self.r_day, self.r_time, self.r_sub, self.r_room]:
+            screen.add_widget(w)
             
         btn_add = AsmaniButton(text="➕ Add Class")
         btn_add.bind(on_press=self.add_class)
@@ -542,21 +507,15 @@ class StudentApp(App):
         list_layout.bind(minimum_height=list_layout.setter('height'))
         
         for index, item in enumerate(self.data["routine"]):
-            card = CardBox(bg_color=(0.88, 0.93, 0.98, 1))
-            status_text = "ON" if item.get('reminder_on', True) else "OFF"
-            txt = f"[b]{item['day']} ({item['time']})[/b]\n{item['subject']} | Remind: {item.get('reminder_min', 30)}m [{status_text}]"
+            card = CardBox()
+            txt = f"[b]{item['day']} ({item['time']})[/b]\n{item['subject']} | Room: {item['room']}"
             lbl = Label(text=txt, markup=True, font_size="11sp", color=(0.15, 0.15, 0.15, 1), halign='left', valign='middle')
             lbl.bind(size=lbl.setter('text_size'))
             card.add_widget(lbl)
             
-            btn_toggle = Button(text="Toggle", size_hint_x=None, width=dp(60), background_color=(0.2, 0.6, 0.8, 1))
-            btn_toggle.bind(on_press=lambda inst, idx=index: self.toggle_reminder(idx))
-            card.add_widget(btn_toggle)
-            
-            btn_del = Button(text="Delete", size_hint_x=None, width=dp(60), background_color=(0.9, 0.2, 0.2, 1))
+            btn_del = Button(text="Delete", size_hint_x=None, width=dp(65), background_color=(0.9, 0.2, 0.2, 1))
             btn_del.bind(on_press=lambda inst, idx=index: self.delete_class(idx))
             card.add_widget(btn_del)
-            
             list_layout.add_widget(card)
             
         scroll.add_widget(list_layout)
@@ -568,21 +527,9 @@ class StudentApp(App):
         self.root_layout.add_widget(screen)
 
     def add_class(self, instance):
-        d = self.r_day.text.strip()
-        t = self.r_time.text.strip()
-        s = self.r_sub.text.strip()
-        r = self.r_room.text.strip()
-        rm = self.r_rem.text.strip()
+        d, t, s, r = self.r_day.text.strip(), self.r_time.text.strip(), self.r_sub.text.strip(), self.r_room.text.strip()
         if d and t and s:
-            rem_val = int(rm) if rm.isdigit() else 30
-            self.data["routine"].append({"day": d, "time": t, "subject": s, "room": r, "reminder_min": rem_val, "reminder_on": True})
-            save_data(self.data)
-            self.show_routine_screen()
-
-    def toggle_reminder(self, index):
-        if 0 <= index < len(self.data["routine"]):
-            current_status = self.data["routine"][index].get("reminder_on", True)
-            self.data["routine"][index]["reminder_on"] = not current_status
+            self.data["routine"].append({"day": d, "time": t, "subject": s, "room": r, "reminder_min": 30, "reminder_on": True})
             save_data(self.data)
             self.show_routine_screen()
 
@@ -595,27 +542,26 @@ class StudentApp(App):
     def show_exam_screen(self):
         self.clear()
         screen = BoxLayout(orientation="vertical", padding=dp(15), spacing=dp(10))
-        screen.add_widget(Label(text="📝 CT, Mid & Final Exam Manager", font_size="18sp", bold=True, color=(0.1, 0.3, 0.5, 1), size_hint_y=None, height=dp(35)))
+        screen.add_widget(Label(text="📝 Exams & Countdowns", font_size="18sp", bold=True, color=(0.1, 0.3, 0.5, 1), size_hint_y=None, height=dp(35)))
         
-        self.e_type = TextInput(hint_text="Exam Type (e.g. CT-1 / Mid / Final)", multiline=False, size_hint_y=None, height=dp(38))
+        self.e_type = TextInput(hint_text="Type (Mid / Final / CT)", multiline=False, size_hint_y=None, height=dp(38))
         self.e_sub = TextInput(hint_text="Subject Name", multiline=False, size_hint_y=None, height=dp(38))
-        self.e_date = TextInput(hint_text="Date (e.g. 2026-04-15)", multiline=False, size_hint_y=None, height=dp(38))
-        self.e_time = TextInput(hint_text="Time (e.g. 10:00 AM)", multiline=False, size_hint_y=None, height=dp(38))
+        self.e_date = TextInput(hint_text="Date (YYYY-MM-DD)", multiline=False, size_hint_y=None, height=dp(38))
         
-        for widget in [self.e_type, self.e_sub, self.e_date, self.e_time]:
-            screen.add_widget(widget)
+        for w in [self.e_type, self.e_sub, self.e_date]:
+            screen.add_widget(w)
             
-        btn_add_exam = AsmaniButton(text="➕ Add Exam / CT")
-        btn_add_exam.bind(on_press=self.add_exam)
-        screen.add_widget(btn_add_exam)
+        btn_add = AsmaniButton(text="➕ Add Exam")
+        btn_add.bind(on_press=self.add_exam)
+        screen.add_widget(btn_add)
         
         scroll = ScrollView()
-        exam_list_layout = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(8), padding=dp(2))
-        exam_list_layout.bind(minimum_height=exam_list_layout.setter('height'))
+        list_layout = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(8), padding=dp(2))
+        list_layout.bind(minimum_height=list_layout.setter('height'))
         
         for index, item in enumerate(self.data.get("exams", [])):
-            card = CardBox(bg_color=(0.88, 0.93, 0.98, 1))
-            txt = f"[b]{item['type']} : {item['subject']}[/b]\n📅 Date: {item['date']} | ⏰ {item['time']}"
+            card = CardBox()
+            txt = f"[b]{item['type']} : {item['subject']}[/b]\n📅 Date: {item['date']}"
             lbl = Label(text=txt, markup=True, font_size="12sp", color=(0.15, 0.15, 0.15, 1), halign='left', valign='middle')
             lbl.bind(size=lbl.setter('text_size'))
             card.add_widget(lbl)
@@ -623,10 +569,9 @@ class StudentApp(App):
             btn_del = Button(text="Delete", size_hint_x=None, width=dp(70), background_color=(0.9, 0.2, 0.2, 1))
             btn_del.bind(on_press=lambda inst, idx=index: self.delete_exam(idx))
             card.add_widget(btn_del)
+            list_layout.add_widget(card)
             
-            exam_list_layout.add_widget(card)
-            
-        scroll.add_widget(exam_list_layout)
+        scroll.add_widget(list_layout)
         screen.add_widget(scroll)
         
         btn_back = AccentButton(text="🔙 Back to Dashboard")
@@ -635,19 +580,14 @@ class StudentApp(App):
         self.root_layout.add_widget(screen)
 
     def add_exam(self, instance):
-        t = self.e_type.text.strip()
-        s = self.e_sub.text.strip()
-        d = self.e_date.text.strip()
-        tm = self.e_time.text.strip()
+        t, s, d = self.e_type.text.strip(), self.e_sub.text.strip(), self.e_date.text.strip()
         if t and s:
-            if "exams" not in self.data:
-                self.data["exams"] = []
-            self.data["exams"].append({"type": t, "subject": s, "date": d, "time": tm})
+            self.data["exams"].append({"type": t, "subject": s, "date": d})
             save_data(self.data)
             self.show_exam_screen()
 
     def delete_exam(self, index):
-        if "exams" in self.data and 0 <= index < len(self.data["exams"]):
+        if 0 <= index < len(self.data["exams"]):
             self.data["exams"].pop(index)
             save_data(self.data)
             self.show_exam_screen()
@@ -655,10 +595,10 @@ class StudentApp(App):
     def show_task_screen(self):
         self.clear()
         screen = BoxLayout(orientation="vertical", padding=dp(15), spacing=dp(10))
-        screen.add_widget(Label(text="📌 Subject-wise Task & Assignment Manager", font_size="16sp", bold=True, color=(0.1, 0.3, 0.5, 1), size_hint_y=None, height=dp(35)))
+        screen.add_widget(Label(text="📌 Quick Notes & Tasks", font_size="18sp", bold=True, color=(0.1, 0.3, 0.5, 1), size_hint_y=None, height=dp(35)))
         
-        self.t_sub = TextInput(hint_text="Subject Name (e.g. CSE 2391)", multiline=False, size_hint_y=None, height=dp(38))
-        self.t_text = TextInput(hint_text="Task Details / Assignment", multiline=False, size_hint_y=None, height=dp(38))
+        self.t_sub = TextInput(hint_text="Subject / Topic", multiline=False, size_hint_y=None, height=dp(38))
+        self.t_text = TextInput(hint_text="Task / Syllabus Checklist Detail", multiline=False, size_hint_y=None, height=dp(38))
         
         for w in [self.t_sub, self.t_text]:
             screen.add_widget(w)
@@ -668,11 +608,11 @@ class StudentApp(App):
         screen.add_widget(btn_add)
         
         scroll = ScrollView()
-        self.task_list_layout = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(8), padding=dp(2))
-        self.task_list_layout.bind(minimum_height=self.task_list_layout.setter('height'))
+        list_layout = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(8), padding=dp(2))
+        list_layout.bind(minimum_height=list_layout.setter('height'))
         
         for idx, t in enumerate(self.data["tasks"]):
-            card = CardBox(bg_color=(0.88, 0.93, 0.98, 1))
+            card = CardBox()
             txt = f"[b]{t.get('subject', 'General')}[/b]\n• {t.get('text', '')}"
             lbl = Label(text=txt, markup=True, font_size="12sp", color=(0.15, 0.15, 0.15, 1), halign='left', valign='middle')
             lbl.bind(size=lbl.setter('text_size'))
@@ -681,10 +621,9 @@ class StudentApp(App):
             btn_done = Button(text="Done", size_hint_x=None, width=dp(70), background_color=(0.2, 0.7, 0.3, 1))
             btn_done.bind(on_press=lambda inst, i=idx: self.delete_task(i))
             card.add_widget(btn_done)
+            list_layout.add_widget(card)
             
-            self.task_list_layout.add_widget(card)
-            
-        scroll.add_widget(self.task_list_layout)
+        scroll.add_widget(list_layout)
         screen.add_widget(scroll)
         
         btn_back = AccentButton(text="🔙 Back to Dashboard")
@@ -693,8 +632,7 @@ class StudentApp(App):
         self.root_layout.add_widget(screen)
 
     def add_task(self, instance):
-        sub = self.t_sub.text.strip()
-        text = self.t_text.text.strip()
+        sub, text = self.t_sub.text.strip(), self.t_text.text.strip()
         if text:
             self.data["tasks"].append({"subject": sub if sub else "General", "text": text})
             save_data(self.data)
@@ -706,55 +644,45 @@ class StudentApp(App):
             save_data(self.data)
             self.show_task_screen()
 
-    def show_album_screen(self):
+    def show_cgpa_screen(self):
         self.clear()
         screen = BoxLayout(orientation="vertical", padding=dp(15), spacing=dp(10))
-        screen.add_widget(Label(text="🖼️ Subject-wise Albums & Gallery Notes", font_size="18sp", bold=True, color=(0.1, 0.3, 0.5, 1), size_hint_y=None, height=dp(35)))
+        screen.add_widget(Label(text="📊 CGPA & Grade Calculator", font_size="18sp", bold=True, color=(0.1, 0.3, 0.5, 1), size_hint_y=None, height=dp(35)))
         
-        self.a_sub = TextInput(hint_text="Subject Name (e.g. CSE 2391)", multiline=False, size_hint_y=None, height=dp(38))
-        self.a_note = TextInput(hint_text="Note / Description", multiline=False, size_hint_y=None, height=dp(38))
-        self.a_img = TextInput(hint_text="Image Path (e.g. C:/Users/.../pic.jpg)", multiline=False, size_hint_y=None, height=dp(38))
+        self.cg_credit = TextInput(hint_text="Credit Hours (e.g. 3)", multiline=False, size_hint_y=None, height=dp(38))
+        self.cg_point = TextInput(hint_text="Grade Point (e.g. 3.75)", multiline=False, size_hint_y=None, height=dp(38))
+        self.cg_result = Label(text="Enter your grades to calculate CGPA", font_size="14sp", bold=True, color=(0.1, 0.4, 0.2, 1), size_hint_y=None, height=dp(35))
         
-        for w in [self.a_sub, self.a_note, self.a_img]:
-            screen.add_widget(w)
+        screen.add_widget(self.cg_credit)
+        screen.add_widget(self.cg_point)
+        screen.add_widget(self.cg_result)
+        
+        if "cgpa_list" not in self.data:
+            self.data["cgpa_list"] = []
             
-        btn_add = AsmaniButton(text="➕ Save Image & Note to Album")
-        btn_add.bind(on_press=self.add_album_item)
-        screen.add_widget(btn_add)
+        btn_calc = AsmaniButton(text="🧮 Add Subject & Calculate")
+        btn_calc.bind(on_press=self.calc_cgpa)
+        screen.add_widget(btn_calc)
+        
+        btn_clear_cg = Button(text="Reset List", size_hint_y=None, height=dp(35), background_color=(0.8,0.2,0.2,1))
+        btn_clear_cg.bind(on_press=self.reset_cgpa)
+        screen.add_widget(btn_clear_cg)
         
         scroll = ScrollView()
-        album_layout = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(10), padding=dp(2))
-        album_layout.bind(minimum_height=album_layout.setter('height'))
+        list_layout = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6), padding=dp(2))
+        list_layout.bind(minimum_height=list_layout.setter('height'))
         
-        albums = self.data.get("albums", {})
-        if not albums:
-            album_layout.add_widget(Label(text="No subject albums added yet.", font_size="13sp", color=(0.5, 0.5, 0.5, 1), size_hint_y=None, height=dp(40)))
-        else:
-            for sub, items in albums.items():
-                album_layout.add_widget(Label(text=f"📂 Subject: {sub}", font_size="14sp", bold=True, color=(0.1, 0.3, 0.5, 1), size_hint_y=None, height=dp(30)))
-                for idx, item in enumerate(items):
-                    card = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(100), padding=dp(5), spacing=dp(10))
-                    
-                    img_path = item.get('image_path', '')
-                    if img_path and os.path.exists(img_path):
-                        img = AsyncImage(source=img_path, size_hint_x=None, width=dp(90))
-                        card.add_widget(img)
-                    else:
-                        lbl_img = Label(text="[No Image]", font_size="10sp", size_hint_x=None, width=dp(80), color=(0.5,0.5,0.5,1))
-                        card.add_widget(lbl_img)
-                        
-                    txt = f"📅 {item['date']}\n📝 {item['note']}"
-                    lbl = Label(text=txt, markup=True, font_size="12sp", color=(0.15, 0.15, 0.15, 1), halign='left', valign='middle')
-                    lbl.bind(size=lbl.setter('text_size'))
-                    card.add_widget(lbl)
-                    
-                    btn_del = Button(text="Delete", size_hint_x=None, width=dp(60), background_color=(0.9, 0.2, 0.2, 1))
-                    btn_del.bind(on_press=lambda inst, s=sub, i=idx: self.delete_album_item(s, i))
-                    card.add_widget(btn_del)
-                    
-                    album_layout.add_widget(card)
+        total_cred = sum(x['credit'] for x in self.data["cgpa_list"])
+        total_gp = sum(x['credit'] * x['point'] for x in self.data["cgpa_list"])
+        cgpa_val = (total_gp / total_cred) if total_cred > 0 else 0.0
+        self.cg_result.text = f"Total Credits: {total_cred} | Calculated CGPA: {cgpa_val:.2f}"
+        
+        for idx, item in enumerate(self.data["cgpa_list"]):
+            card = CardBox()
+            card.add_widget(Label(text=f"Credit: {item['credit']} | Point: {item['point']}", font_size="12sp", color=(0.15,0.15,0.15,1)))
+            list_layout.add_widget(card)
             
-        scroll.add_widget(album_layout)
+        scroll.add_widget(list_layout)
         screen.add_widget(scroll)
         
         btn_back = AccentButton(text="🔙 Back to Dashboard")
@@ -762,33 +690,201 @@ class StudentApp(App):
         screen.add_widget(btn_back)
         self.root_layout.add_widget(screen)
 
-    def add_album_item(self, instance):
-        sub = self.a_sub.text.strip()
-        note = self.a_note.text.strip()
-        img_path = self.a_img.text.strip()
-        if sub and note:
-            if "albums" not in self.data:
-                self.data["albums"] = {}
-            if sub not in self.data["albums"]:
-                self.data["albums"][sub] = []
-            
-            current_date = datetime.now().strftime("%Y-%m-%d")
-            
-            self.data["albums"][sub].append({
-                "date": current_date,
-                "note": note,
-                "image_path": img_path
-            })
+    def calc_cgpa(self, instance):
+        try:
+            c = float(self.cg_credit.text.strip())
+            p = float(self.cg_point.text.strip())
+            if "cgpa_list" not in self.data:
+                self.data["cgpa_list"] = []
+            self.data["cgpa_list"].append({"credit": c, "point": p})
             save_data(self.data)
-            self.show_album_screen()
+            self.show_cgpa_screen()
+        except ValueError:
+            self.cg_result.text = "⚠️ Please enter valid numbers!"
 
-    def delete_album_item(self, subject, index):
-        if subject in self.data["albums"] and 0 <= index < len(self.data["albums"][subject]):
-            self.data["albums"][subject].pop(index)
-            if not self.data["albums"][subject]:
-                del self.data["albums"][subject]
+    def reset_cgpa(self, instance):
+        self.data["cgpa_list"] = []
+        save_data(self.data)
+        self.show_cgpa_screen()
+
+    def show_photo_screen(self):
+        self.clear()
+        screen = BoxLayout(orientation="vertical", padding=dp(15), spacing=dp(10))
+        screen.add_widget(Label(text="📸 Photo Vault & Document Snaps", font_size="18sp", bold=True, color=(0.1, 0.3, 0.5, 1), size_hint_y=None, height=dp(35)))
+        
+        self.p_title = TextInput(hint_text="Photo Title / Note", multiline=False, size_hint_y=None, height=dp(38))
+        self.p_path = TextInput(hint_text="Image Path / URL", multiline=False, size_hint_y=None, height=dp(38))
+        
+        screen.add_widget(self.p_title)
+        screen.add_widget(self.p_path)
+        
+        btn_add = AsmaniButton(text="➕ Save Snap")
+        btn_add.bind(on_press=self.add_photo)
+        screen.add_widget(btn_add)
+        
+        scroll = ScrollView()
+        list_layout = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(10), padding=dp(2))
+        list_layout.bind(minimum_height=list_layout.setter('height'))
+        
+        for idx, item in enumerate(self.data.get("photos", [])):
+            card = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(90), padding=dp(5), spacing=dp(10))
+            if item.get('path') and os.path.exists(item['path']):
+                card.add_widget(AsyncImage(source=item['path'], size_hint_x=None, width=dp(80)))
+            else:
+                card.add_widget(Label(text="[No Image]", size_hint_x=None, width=dp(80), font_size="10sp"))
+            card.add_widget(Label(text=item['title'], font_size="13sp", color=(0.15,0.15,0.15,1)))
+            
+            btn_del = Button(text="Del", size_hint_x=None, width=dp(50), background_color=(0.9,0.2,0.2,1))
+            btn_del.bind(on_press=lambda inst, i=idx: self.delete_photo(i))
+            card.add_widget(btn_del)
+            list_layout.add_widget(card)
+            
+        scroll.add_widget(list_layout)
+        screen.add_widget(scroll)
+        
+        btn_back = AccentButton(text="🔙 Back to Dashboard")
+        btn_back.bind(on_press=lambda x: self.show_dashboard())
+        screen.add_widget(btn_back)
+        self.root_layout.add_widget(screen)
+
+    def add_photo(self, instance):
+        t, p = self.p_title.text.strip(), self.p_path.text.strip()
+        if t:
+            self.data["photos"].append({"title": t, "path": p})
             save_data(self.data)
-            self.show_album_screen()
+            self.show_photo_screen()
+
+    def delete_photo(self, index):
+        if 0 <= index < len(self.data["photos"]):
+            self.data["photos"].pop(index)
+            save_data(self.data)
+            self.show_photo_screen()
+
+    def show_timer_screen(self):
+        self.clear()
+        screen = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(15))
+        screen.add_widget(Label(text="⏱️ Pomodoro Study Timer", font_size="20sp", bold=True, color=(0.1, 0.3, 0.5, 1), size_hint_y=None, height=dp(40)))
+        
+        self.timer_display = Label(text="25 : 00", font_size="40sp", bold=True, color=(0.1, 0.5, 0.3, 1), size_hint_y=None, height=dp(80))
+        screen.add_widget(self.timer_display)
+        
+        info_lbl = Label(text="Focus for 25 minutes, then take a 5 min break!", font_size="13sp", color=(0.3,0.3,0.3,1), size_hint_y=None, height=dp(30))
+        screen.add_widget(info_lbl)
+        
+        btn_start = AsmaniButton(text="🚀 Start Focus Session")
+        btn_start.bind(on_press=lambda x: setattr(self.timer_display, 'text', "Session Running... (25:00)"))
+        screen.add_widget(btn_start)
+        
+        screen.add_widget(BoxLayout())
+        
+        btn_back = AccentButton(text="🔙 Back to Dashboard")
+        btn_back.bind(on_press=lambda x: self.show_dashboard())
+        screen.add_widget(btn_back)
+        self.root_layout.add_widget(screen)
+
+    def show_resource_screen(self):
+        self.clear()
+        screen = BoxLayout(orientation="vertical", padding=dp(15), spacing=dp(10))
+        screen.add_widget(Label(text="📁 Study Resources & PDFs", font_size="18sp", bold=True, color=(0.1, 0.3, 0.5, 1), size_hint_y=None, height=dp(35)))
+        
+        self.res_name = TextInput(hint_text="Resource / Book Name", multiline=False, size_hint_y=None, height=dp(38))
+        self.res_link = TextInput(hint_text="File Path / URL", multiline=False, size_hint_y=None, height=dp(38))
+        
+        screen.add_widget(self.res_name)
+        screen.add_widget(self.res_link)
+        
+        btn_add = AsmaniButton(text="➕ Add Resource")
+        btn_add.bind(on_press=self.add_resource)
+        screen.add_widget(btn_add)
+        
+        scroll = ScrollView()
+        list_layout = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(8), padding=dp(2))
+        list_layout.bind(minimum_height=list_layout.setter('height'))
+        
+        for idx, item in enumerate(self.data.get("resources", [])):
+            card = CardBox()
+            card.add_widget(Label(text=f"[b]{item['name']}[/b]\nPath: {item['link']}", markup=True, font_size="12sp", color=(0.15,0.15,0.15,1)))
+            
+            btn_del = Button(text="Del", size_hint_x=None, width=dp(50), background_color=(0.9,0.2,0.2,1))
+            btn_del.bind(on_press=lambda inst, i=idx: self.delete_resource(i))
+            card.add_widget(btn_del)
+            list_layout.add_widget(card)
+            
+        scroll.add_widget(list_layout)
+        screen.add_widget(scroll)
+        
+        btn_back = AccentButton(text="🔙 Back to Dashboard")
+        btn_back.bind(on_press=lambda x: self.show_dashboard())
+        screen.add_widget(btn_back)
+        self.root_layout.add_widget(screen)
+
+    def add_resource(self, instance):
+        n, l = self.res_name.text.strip(), self.res_link.text.strip()
+        if n:
+            self.data["resources"].append({"name": n, "link": l})
+            save_data(self.data)
+            self.show_resource_screen()
+
+    def delete_resource(self, index):
+        if 0 <= index < len(self.data["resources"]):
+            self.data["resources"].pop(index)
+            save_data(self.data)
+            self.show_resource_screen()
+
+    def show_theme_screen(self):
+        self.clear()
+        screen = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(15))
+        screen.add_widget(Label(text="🎨 Custom Dashboard Themes", font_size="18sp", bold=True, color=(0.1, 0.3, 0.5, 1), size_hint_y=None, height=dp(35)))
+        
+        btn_asmani = AsmaniButton(text="💙 Asmani Blue Theme")
+        btn_asmani.bind(on_press=lambda x: self.change_theme((0.72, 0.88, 0.98, 1)))
+        screen.add_widget(btn_asmani)
+        
+        btn_emerald = Button(text="💚 Emerald Dark Theme", background_normal='', background_color=(0.1, 0.5, 0.3, 1), size_hint_y=None, height=dp(42))
+        btn_emerald.bind(on_press=lambda x: self.change_theme((0.15, 0.25, 0.2, 1)))
+        screen.add_widget(btn_emerald)
+        
+        btn_sunset = Button(text="🧡 Sunset Orange Theme", background_normal='', background_color=(0.8, 0.4, 0.2, 1), size_hint_y=None, height=dp(42))
+        btn_sunset.bind(on_press=lambda x: self.change_theme((0.9, 0.7, 0.5, 1)))
+        screen.add_widget(btn_sunset)
+        
+        screen.add_widget(BoxLayout())
+        
+        btn_back = AccentButton(text="🔙 Back to Dashboard")
+        btn_back.bind(on_press=lambda x: self.show_dashboard())
+        screen.add_widget(btn_back)
+        self.root_layout.add_widget(screen)
+
+    def show_json_viewer_screen(self):
+        self.clear()
+        screen = BoxLayout(orientation="vertical", padding=dp(15), spacing=dp(10))
+        screen.add_widget(Label(text="📄 Raw JSON File Viewer", font_size="18sp", bold=True, color=(0.1, 0.3, 0.5, 1), size_hint_y=None, height=dp(35)))
+        
+        data_path = get_data_file()
+        path_lbl = Label(text=f"Location: {data_path}", font_size="10sp", color=(0.3, 0.3, 0.3, 1), size_hint_y=None, height=dp(30))
+        screen.add_widget(path_lbl)
+        
+        try:
+            with open(data_path, "r", encoding="utf-8") as f:
+                file_content = f.read()
+        except Exception as e:
+            file_content = f"Could not read json file: {str(e)}"
+            
+        scroll = ScrollView()
+        txt_input = TextInput(text=file_content, readonly=True, multiline=True, font_size="12sp")
+        scroll.add_widget(txt_input)
+        screen.add_widget(scroll)
+        
+        btn_back = AccentButton(text="🔙 Back to Dashboard")
+        btn_back.bind(on_press=lambda x: self.show_dashboard())
+        screen.add_widget(btn_back)
+        self.root_layout.add_widget(screen)
+
+    def change_theme(self, color_tuple):
+        self.bg_color_inst.rgba = color_tuple
+        self.data["theme"] = str(color_tuple)
+        save_data(self.data)
+        self.show_dashboard()
 
 if __name__ == "__main__":
     StudentApp().run()
