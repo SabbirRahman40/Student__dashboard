@@ -9,7 +9,7 @@ source.dir = .
 source.include_exts = py,json,png,jpg,jpeg,kv,atlas,ttf,otf
 source.exclude_dirs = .git,.github,.buildozer,bin,__pycache__,venv,.venv
 
-version = 1.0.0
+version = 1.1.1
 
 requirements = python3,kivy
 
