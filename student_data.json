@@ -153,5 +153,10 @@
     ],
     "exams": [],
     "tasks": [],
+    "photos": [],
+    "notes": [],
+    "resources": [],
+    "cgpa_list": [],
+    "theme": "(0.15, 0.25, 0.2, 1)",
     "albums": {}
 }
