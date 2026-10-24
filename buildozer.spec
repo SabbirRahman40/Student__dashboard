@@ -9,9 +9,9 @@ source.dir = .
 source.include_exts = py,json,png,jpg,jpeg,kv,atlas,ttf,otf
 source.exclude_dirs = .git,.github,.buildozer,bin,__pycache__,venv,.venv
 
-version = 1.1.1
+version = 1.1.2
 
-requirements = python3,kivy
+requirements = python3,kivy,plyer
 
 p4a.branch = develop
 p4a.commit = d2ee8c5
@@ -19,7 +19,7 @@ p4a.commit = d2ee8c5
 orientation = portrait
 fullscreen = 0
 
-android.permissions =
+android.permissions = CAMERA,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE
 android.api = 34
 android.minapi = 21
 android.ndk = 28c
